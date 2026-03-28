@@ -69,8 +69,8 @@ export default function KnowledgePage() {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(
         (entry) =>
-          entry.topic.toLowerCase().includes(query) ||
-          entry.summary.toLowerCase().includes(query)
+          (entry.topic || '').toLowerCase().includes(query) ||
+          (entry.summary || '').toLowerCase().includes(query)
       );
     }
 

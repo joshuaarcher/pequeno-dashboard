@@ -6,6 +6,7 @@ interface PartBadgeProps {
 }
 
 export default function PartBadge({ part, size = 'md' }: PartBadgeProps) {
+  if (!part) return null;
   const bgColor = PART_BG_COLORS[part.toLowerCase()] || 'bg-neutral-600';
   const sizeClasses = {
     sm: 'px-2 py-1 text-xs',

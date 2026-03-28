@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase, JoshuaMindEntry } from '@/lib/supabase';
 import SearchBar from '@/components/SearchBar';
 import { PAGINATION_SIZE } from '@/lib/constants';
+
+const ENTRY_TYPES = ['memory', 'fact', 'reflection', 'idea', 'observation', 'dream', 'quote', 'note'];
 
 export default function MindPage() {
   const [entries, setEntries] = useState<JoshuaMindEntry[]>([]);
@@ -17,6 +19,17 @@ export default function MindPage() {
   const [allTypes, setAllTypes] = useState<string[]>([]);
   const [allTopics, setAllTopics] = useState<string[]>([]);
   const [allPeople, setAllPeople] = useState<string[]>([]);
+
+  // Form state
+  const [formOpen, setFormOpen] = useState(false);
+  const [formContent, setFormContent] = useState('');
+  const [formType, setFormType] = useState('memory');
+  const [formTopics, setFormTopics] = useState('');
+  const [formPeople, setFormPeople] = useState('');
+  const [formAssociations, setFormAssociations] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitMessage, setSubmitMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const contentRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     fetchEntries();
@@ -112,6 +125,52 @@ export default function MindPage() {
     setDisplayedCount((prev) => prev + PAGINATION_SIZE);
   };
 
+  const parseTagString = (str: string): string[] => {
+    return str.split(',').map(s => s.trim()).filter(Boolean);
+  };
+
+  const handleSubmit = async () => {
+    if (!formContent.trim()) return;
+    setSubmitting(true);
+    setSubmitMessage(null);
+
+    try {
+      const { error } = await supabase.from('joshua_mind').insert({
+        content: formContent.trim(),
+        type: formType,
+        media_type: 'text',
+        source: 'dashboard',
+        topics: parseTagString(formTopics),
+        people: parseTagString(formPeople),
+        associations: parseTagString(formAssociations),
+      });
+
+      if (error) throw error;
+
+      setSubmitMessage({ text: 'Saved.', type: 'success' });
+      setFormContent('');
+      setFormTopics('');
+      setFormPeople('');
+      setFormAssociations('');
+      setFormType('memory');
+      fetchEntries();
+
+      setTimeout(() => setSubmitMessage(null), 3000);
+    } catch (error) {
+      console.error('Error inserting mind entry:', error);
+      setSubmitMessage({ text: 'Failed to save. Check console.', type: 'error' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleFormToggle = () => {
+    setFormOpen(!formOpen);
+    if (!formOpen) {
+      setTimeout(() => contentRef.current?.focus(), 100);
+    }
+  };
+
   if (loading) {
     return (
       <div className="p-6 lg:p-8">
@@ -128,6 +187,99 @@ export default function MindPage() {
       <div className="mb-8">
         <h1 className="text-4xl font-bold text-neutral-100 mb-2">Josh's Mind</h1>
         <p className="text-neutral-400">Personal thoughts, observations, and memories</p>
+      </div>
+
+      {/* Add Entry Form */}
+      <div className="mb-8">
+        <button
+          onClick={handleFormToggle}
+          className="flex items-center gap-2 px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 rounded-lg font-medium transition-colors text-sm"
+        >
+          <span className={`transition-transform ${formOpen ? 'rotate-45' : ''}`}>+</span>
+          {formOpen ? 'Close' : 'Add something to your mind'}
+        </button>
+
+        {formOpen && (
+          <div className="mt-4 bg-neutral-800 border border-amber-500/30 rounded-lg p-5 space-y-4">
+            <textarea
+              ref={contentRef}
+              value={formContent}
+              onChange={(e) => setFormContent(e.target.value)}
+              placeholder="What's on your mind?"
+              rows={4}
+              className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-neutral-100 placeholder-neutral-500 focus:border-amber-500/50 focus:outline-none resize-y text-sm"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && e.metaKey) handleSubmit();
+              }}
+            />
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1">Type</label>
+                <select
+                  value={formType}
+                  onChange={(e) => setFormType(e.target.value)}
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-neutral-100 text-sm focus:border-amber-500/50 focus:outline-none"
+                >
+                  {ENTRY_TYPES.map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1">Topics <span className="text-neutral-600">(comma-separated)</span></label>
+                <input
+                  type="text"
+                  value={formTopics}
+                  onChange={(e) => setFormTopics(e.target.value)}
+                  placeholder="philosophy, music, ..."
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-neutral-100 placeholder-neutral-600 text-sm focus:border-amber-500/50 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1">People <span className="text-neutral-600">(comma-separated)</span></label>
+                <input
+                  type="text"
+                  value={formPeople}
+                  onChange={(e) => setFormPeople(e.target.value)}
+                  placeholder="Sarah, Dmitry, ..."
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-neutral-100 placeholder-neutral-600 text-sm focus:border-amber-500/50 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1">Associations <span className="text-neutral-600">(comma-separated)</span></label>
+                <input
+                  type="text"
+                  value={formAssociations}
+                  onChange={(e) => setFormAssociations(e.target.value)}
+                  placeholder="pequeno, covenant, ..."
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-neutral-100 placeholder-neutral-600 text-sm focus:border-amber-500/50 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-neutral-600">⌘+Enter to save</p>
+              <div className="flex items-center gap-3">
+                {submitMessage && (
+                  <span className={`text-sm ${submitMessage.type === 'success' ? 'text-green-400' : 'text-red-400'}`}>
+                    {submitMessage.text}
+                  </span>
+                )}
+                <button
+                  onClick={handleSubmit}
+                  disabled={submitting || !formContent.trim()}
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-400 disabled:bg-neutral-700 disabled:text-neutral-500 text-neutral-900 rounded-lg font-medium text-sm transition-colors"
+                >
+                  {submitting ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
