@@ -1,48 +1,114 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase, ThoughtsEntry } from '@/lib/supabase';
 import SearchBar from '@/components/SearchBar';
 
-interface ExpandedThought {
-  id: string;
-  isExpanded: boolean;
-}
+const ITEMS_PER_PAGE = 50;
 
 export default function ThoughtsPage() {
   const [thoughts, setThoughts] = useState<ThoughtsEntry[]>([]);
-  const [filteredThoughts, setFilteredThoughts] = useState<ThoughtsEntry[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [expandedThoughts, setExpandedThoughts] = useState<Map<string, boolean>>(new Map());
-  const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
-  
+
   // Filter state
   const [sourceFilter, setSourceFilter] = useState<Set<string>>(new Set());
   const [availableSources, setAvailableSources] = useState<string[]>([]);
 
-  const ITEMS_PER_PAGE = 50;
+  const searchTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Debounce search input
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, [searchQuery]);
+
+  // Fetch distinct sources once on mount by paginating through all source values
+  useEffect(() => {
+    const fetchSources = async () => {
+      try {
+        const allSources = new Set<string>();
+        let from = 0;
+        const batchSize = 1000;
+        let keepGoing = true;
+
+        while (keepGoing) {
+          const { data, error } = await supabase
+            .from('thoughts')
+            .select('source')
+            .range(from, from + batchSize - 1);
+
+          if (error) throw error;
+
+          if (!data || data.length === 0) {
+            keepGoing = false;
+          } else {
+            data.forEach((t: { source: string }) => {
+              if (t.source) allSources.add(t.source);
+            });
+            if (data.length < batchSize) {
+              keepGoing = false;
+            } else {
+              from += batchSize;
+            }
+          }
+        }
+
+        setAvailableSources(Array.from(allSources).sort());
+      } catch (err) {
+        console.error('Error fetching sources:', err);
+      }
+    };
+
+    fetchSources();
+  }, []);
+
+  // Build a query with current filters applied
+  const buildQuery = useCallback(
+    (selectStr: string, options?: { count?: 'exact' }) => {
+      let query = supabase.from('thoughts').select(selectStr, options);
+
+      if (sourceFilter.size > 0) {
+        const sources = Array.from(sourceFilter);
+        if (sources.length === 1) {
+          query = query.eq('source', sources[0]);
+        } else {
+          query = query.in('source', sources);
+        }
+      }
+
+      if (debouncedSearch) {
+        query = query.ilike('content', `%${debouncedSearch}%`);
+      }
+
+      return query;
+    },
+    [sourceFilter, debouncedSearch]
+  );
+
+  // Fetch thoughts when filters/search change
   useEffect(() => {
     const fetchThoughts = async () => {
       setLoading(true);
       try {
-        const { data, error } = await supabase
-          .from('thoughts')
-          .select('*')
-          .range(0, 4999)
-          .order('created_at', { ascending: false });
+        // Fetch first page + get total count
+        const { data, error, count } = await buildQuery('*', { count: 'exact' })
+          .order('created_at', { ascending: false })
+          .range(0, ITEMS_PER_PAGE - 1);
 
         if (error) throw error;
 
-        const typedData = (data || []) as ThoughtsEntry[];
-        setThoughts(typedData);
-
-        // Extract unique sources
-        const sources = Array.from(new Set(typedData.map(t => t.source).filter(Boolean)));
-
-        setAvailableSources(sources.sort());
+        setThoughts((data || []) as ThoughtsEntry[]);
+        setTotalCount(count ?? 0);
       } catch (err) {
         console.error('Error fetching thoughts:', err);
       } finally {
@@ -51,30 +117,29 @@ export default function ThoughtsPage() {
     };
 
     fetchThoughts();
-  }, []);
+  }, [buildQuery]);
 
-  useEffect(() => {
-    let results = thoughts;
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const start = thoughts.length;
+      const end = start + ITEMS_PER_PAGE - 1;
 
-    // Apply search filter
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      results = results.filter(
-        thought =>
-          thought.content?.toLowerCase().includes(query) ||
-          thought.source?.toLowerCase().includes(query)
-      );
+      const { data, error } = await buildQuery('*')
+        .order('created_at', { ascending: false })
+        .range(start, end);
+
+      if (error) throw error;
+
+      setThoughts(prev => [...prev, ...((data || []) as ThoughtsEntry[])]);
+    } catch (err) {
+      console.error('Error loading more thoughts:', err);
+    } finally {
+      setLoadingMore(false);
     }
+  };
 
-    // Apply source filter
-    if (sourceFilter.size > 0) {
-      results = results.filter(t => t.source && sourceFilter.has(t.source));
-    }
-
-    setFilteredThoughts(results);
-    setPage(0);
-    setHasMore(results.length > ITEMS_PER_PAGE);
-  }, [searchQuery, sourceFilter, thoughts]);
+  const hasMore = thoughts.length < totalCount;
 
   const toggleExpanded = (id: string) => {
     const newExpanded = new Map(expandedThoughts);
@@ -95,9 +160,6 @@ export default function ThoughtsPage() {
     }
     setSourceFilter(newFilter);
   };
-
-  const displayedThoughts = filteredThoughts.slice(0, (page + 1) * ITEMS_PER_PAGE);
-  const canLoadMore = (page + 1) * ITEMS_PER_PAGE < filteredThoughts.length;
 
   const formatDate = (dateString: string | null) => {
     if (!dateString) return '';
@@ -157,18 +219,18 @@ export default function ThoughtsPage() {
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-500" />
                 </div>
               </div>
-            ) : filteredThoughts.length === 0 ? (
+            ) : thoughts.length === 0 && totalCount === 0 ? (
               <div className="text-center py-12">
                 <p className="text-gray-400">No thoughts found</p>
               </div>
             ) : (
               <>
                 <div className="mb-4 text-sm text-gray-400">
-                  Showing {displayedThoughts.length} of {filteredThoughts.length} thoughts
+                  Showing {thoughts.length} of {totalCount} thoughts
                 </div>
 
                 <div className="space-y-3">
-                  {displayedThoughts.map(thought => {
+                  {thoughts.map(thought => {
                     const isExpanded = expandedThoughts.get(thought.id);
                     return (
                       <div
@@ -268,13 +330,14 @@ export default function ThoughtsPage() {
                   })}
                 </div>
 
-                {canLoadMore && (
+                {hasMore && (
                   <div className="mt-6 text-center">
                     <button
-                      onClick={() => setPage(page + 1)}
-                      className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-medium text-sm transition"
+                      onClick={loadMore}
+                      disabled={loadingMore}
+                      className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium text-sm transition"
                     >
-                      Load More
+                      {loadingMore ? 'Loading...' : 'Load More'}
                     </button>
                   </div>
                 )}
