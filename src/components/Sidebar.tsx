@@ -15,6 +15,7 @@ export default function Sidebar() {
     { href: '/thoughts', label: 'Thoughts', icon: '💭' },
     { href: '/dispatch', label: 'Dispatch', icon: '📨' },
     { href: '/tasks', label: 'Tasks', icon: '✓' },
+    { href: '/mood', label: 'Family Mood', icon: '♡' },
     { href: '/drift', label: 'Drift Gauge', icon: '⚖' },
   ];
 
