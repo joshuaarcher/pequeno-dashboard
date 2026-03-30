@@ -1,112 +1,173 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase, KnowledgeEntry } from '@/lib/supabase';
 import SearchBar from '@/components/SearchBar';
 import KnowledgeCard from '@/components/KnowledgeCard';
-import { PAGINATION_SIZE } from '@/lib/constants';
+
+const ITEMS_PER_PAGE = 50;
 
 type SortBy = 'modified' | 'importance' | 'access_count';
 
 export default function KnowledgePage() {
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
-  const [filteredEntries, setFilteredEntries] = useState<KnowledgeEntry[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [confidenceRange, setConfidenceRange] = useState([0, 100]);
   const [selectedOwner, setSelectedOwner] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortBy>('modified');
   const [loading, setLoading] = useState(true);
-  const [offset, setOffset] = useState(0);
-  const [displayedCount, setDisplayedCount] = useState(PAGINATION_SIZE);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [allTags, setAllTags] = useState<string[]>([]);
   const [owners, setOwners] = useState<string[]>([]);
 
+  const searchTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Debounce search input
   useEffect(() => {
-    fetchInitialData();
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, [searchQuery]);
+
+  // Fetch all unique tags and part_owners on mount by paginating through all rows
+  useEffect(() => {
+    const fetchFilterOptions = async () => {
+      try {
+        const tagSet = new Set<string>();
+        const ownerSet = new Set<string>();
+        let from = 0;
+        const batchSize = 1000;
+        let keepGoing = true;
+
+        while (keepGoing) {
+          const { data, error } = await supabase
+            .from('knowledge')
+            .select('tags,part_owner')
+            .range(from, from + batchSize - 1);
+
+          if (error) throw error;
+
+          if (!data || data.length === 0) {
+            keepGoing = false;
+          } else {
+            data.forEach((entry: { tags: unknown; part_owner: string | null }) => {
+              if (entry.part_owner) ownerSet.add(entry.part_owner);
+              const entryTags = Array.isArray(entry.tags) ? entry.tags : Object.keys(entry.tags || {});
+              entryTags.forEach((tag: unknown) => {
+                const tagStr = typeof tag === 'string' ? tag : Object.keys(tag as Record<string, unknown>)[0];
+                if (tagStr) tagSet.add(tagStr);
+              });
+            });
+            if (data.length < batchSize) {
+              keepGoing = false;
+            } else {
+              from += batchSize;
+            }
+          }
+        }
+
+        setAllTags(Array.from(tagSet).sort());
+        setOwners(Array.from(ownerSet).sort());
+      } catch (err) {
+        console.error('Error fetching filter options:', err);
+      }
+    };
+
+    fetchFilterOptions();
   }, []);
 
-  useEffect(() => {
-    applyFilters();
-  }, [entries, searchQuery, selectedTags, confidenceRange, selectedOwner, sortBy]);
+  // Build a query with current filters applied
+  const buildQuery = useCallback(
+    (selectStr: string, options?: { count?: 'exact' }) => {
+      let query = supabase.from('knowledge').select(selectStr, options);
 
-  const fetchInitialData = async () => {
-    try {
+      // Confidence filter
+      query = query.gte('confidence', confidenceRange[0] / 100).lte('confidence', confidenceRange[1] / 100);
+
+      // Part owner filter
+      if (selectedOwner) {
+        query = query.eq('part_owner', selectedOwner);
+      }
+
+      // Tags filter — use contains for array columns
+      if (selectedTags.length > 0) {
+        // Filter entries that contain any of the selected tags using overlaps
+        query = query.overlaps('tags', selectedTags);
+      }
+
+      // Search filter
+      if (debouncedSearch) {
+        query = query.or(`topic.ilike.%${debouncedSearch}%,summary.ilike.%${debouncedSearch}%`);
+      }
+
+      // Sort
+      switch (sortBy) {
+        case 'importance':
+          query = query.order('importance_weight', { ascending: false });
+          break;
+        case 'access_count':
+          query = query.order('access_count', { ascending: false });
+          break;
+        case 'modified':
+        default:
+          query = query.order('modified', { ascending: false });
+          break;
+      }
+
+      return query;
+    },
+    [confidenceRange, selectedOwner, selectedTags, debouncedSearch, sortBy]
+  );
+
+  // Fetch entries when filters/search/sort change
+  useEffect(() => {
+    const fetchEntries = async () => {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('knowledge')
-        .select('*')
-        .range(0, 1999)
-        .order('modified', { ascending: false });
+      try {
+        const { data, error, count } = await buildQuery('*', { count: 'exact' })
+          .range(0, ITEMS_PER_PAGE - 1);
+
+        if (error) throw error;
+
+        setEntries((data || []) as KnowledgeEntry[]);
+        setTotalCount(count ?? 0);
+      } catch (err) {
+        console.error('Error fetching knowledge entries:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchEntries();
+  }, [buildQuery]);
+
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const start = entries.length;
+      const end = start + ITEMS_PER_PAGE - 1;
+
+      const { data, error } = await buildQuery('*')
+        .range(start, end);
 
       if (error) throw error;
 
-      setEntries(data || []);
-
-      const tags = new Set<string>();
-      const ownerSet = new Set<string>();
-      (data || []).forEach((entry) => {
-        if (entry.part_owner) ownerSet.add(entry.part_owner);
-        const entryTags = Array.isArray(entry.tags) ? entry.tags : Object.keys(entry.tags || {});
-        entryTags.forEach((tag: string) => {
-          const tagStr = typeof tag === 'string' ? tag : Object.keys(tag)[0];
-          if (tagStr) tags.add(tagStr);
-        });
-      });
-
-      setAllTags(Array.from(tags).sort());
-      setOwners(Array.from(ownerSet).sort());
-    } catch (error) {
-      console.error('Error fetching knowledge entries:', error);
+      setEntries(prev => [...prev, ...((data || []) as KnowledgeEntry[])]);
+    } catch (err) {
+      console.error('Error loading more entries:', err);
     } finally {
-      setLoading(false);
+      setLoadingMore(false);
     }
   };
 
-  const applyFilters = () => {
-    let filtered = [...entries];
-
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (entry) =>
-          (entry.topic || '').toLowerCase().includes(query) ||
-          (entry.summary || '').toLowerCase().includes(query)
-      );
-    }
-
-    filtered = filtered.filter(
-      (entry) => entry.confidence >= confidenceRange[0] / 100 && entry.confidence <= confidenceRange[1] / 100
-    );
-
-    if (selectedTags.length > 0) {
-      filtered = filtered.filter((entry) => {
-        const entryTags = Array.isArray(entry.tags) ? entry.tags : Object.keys(entry.tags || {});
-        const tagStrings = entryTags.map((t: string) => (typeof t === 'string' ? t : Object.keys(t)[0]));
-        return selectedTags.some((tag) => tagStrings.includes(tag));
-      });
-    }
-
-    if (selectedOwner) {
-      filtered = filtered.filter((entry) => entry.part_owner === selectedOwner);
-    }
-
-    filtered.sort((a, b) => {
-      switch (sortBy) {
-        case 'importance':
-          return b.importance_weight - a.importance_weight;
-        case 'access_count':
-          return b.access_count - a.access_count;
-        case 'modified':
-        default:
-          return new Date(b.modified).getTime() - new Date(a.modified).getTime();
-      }
-    });
-
-    setFilteredEntries(filtered);
-    setOffset(0);
-    setDisplayedCount(PAGINATION_SIZE);
-  };
+  const hasMore = entries.length < totalCount;
 
   const toggleTag = (tag: string) => {
     setSelectedTags((prev) =>
@@ -114,20 +175,16 @@ export default function KnowledgePage() {
     );
   };
 
-  const handleLoadMore = () => {
-    setDisplayedCount((prev) => prev + PAGINATION_SIZE);
-  };
-
-  if (loading) {
+  if (loading && entries.length === 0) {
     return (
       <div className="p-6 lg:p-8">
-        <p className="text-neutral-400">Loading knowledge entries...</p>
+        <div className="inline-block">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-500" />
+        </div>
+        <p className="text-neutral-400 mt-2">Loading knowledge entries...</p>
       </div>
     );
   }
-
-  const displayedEntries = filteredEntries.slice(0, displayedCount);
-  const hasMore = displayedCount < filteredEntries.length;
 
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto">
@@ -146,18 +203,23 @@ export default function KnowledgePage() {
             />
           </div>
 
+          <div className="mb-4 text-sm text-neutral-400">
+            Showing {entries.length} of {totalCount} entries
+          </div>
+
           <div className="space-y-4">
-            {displayedEntries.length > 0 ? (
+            {entries.length > 0 ? (
               <>
-                {displayedEntries.map((entry) => (
+                {entries.map((entry) => (
                   <KnowledgeCard key={entry.id} entry={entry} />
                 ))}
                 {hasMore && (
                   <button
-                    onClick={handleLoadMore}
-                    className="w-full py-3 bg-neutral-700 hover:bg-neutral-600 text-neutral-100 rounded-lg font-medium transition-colors"
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                    className="w-full py-3 bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 text-neutral-100 rounded-lg font-medium transition-colors"
                   >
-                    Load More ({filteredEntries.length - displayedCount} remaining)
+                    {loadingMore ? 'Loading...' : `Load More (${totalCount - entries.length} remaining)`}
                   </button>
                 )}
               </>
@@ -240,7 +302,7 @@ export default function KnowledgePage() {
           <div className="bg-neutral-800 border border-neutral-700 rounded-lg p-4">
             <h3 className="text-lg font-semibold text-neutral-100 mb-2">Summary</h3>
             <p className="text-sm text-neutral-400">
-              Showing {displayedEntries.length} of {filteredEntries.length} entries
+              Showing {entries.length} of {totalCount} entries
             </p>
           </div>
         </div>
