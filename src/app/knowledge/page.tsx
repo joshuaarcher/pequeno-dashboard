@@ -136,7 +136,7 @@ export default function KnowledgePage() {
 
         if (error) throw error;
 
-        setEntries((data || []) as KnowledgeEntry[]);
+        setEntries((data || []) as unknown as KnowledgeEntry[]);
         setTotalCount(count ?? 0);
       } catch (err) {
         console.error('Error fetching knowledge entries:', err);
@@ -159,7 +159,7 @@ export default function KnowledgePage() {
 
       if (error) throw error;
 
-      setEntries(prev => [...prev, ...((data || []) as KnowledgeEntry[])]);
+      setEntries(prev => [...prev, ...((data || []) as unknown as KnowledgeEntry[])]);
     } catch (err) {
       console.error('Error loading more entries:', err);
     } finally {

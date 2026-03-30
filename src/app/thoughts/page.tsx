@@ -107,7 +107,7 @@ export default function ThoughtsPage() {
 
         if (error) throw error;
 
-        setThoughts((data || []) as ThoughtsEntry[]);
+        setThoughts((data || []) as unknown as ThoughtsEntry[]);
         setTotalCount(count ?? 0);
       } catch (err) {
         console.error('Error fetching thoughts:', err);
@@ -131,7 +131,7 @@ export default function ThoughtsPage() {
 
       if (error) throw error;
 
-      setThoughts(prev => [...prev, ...((data || []) as ThoughtsEntry[])]);
+      setThoughts(prev => [...prev, ...((data || []) as unknown as ThoughtsEntry[])]);
     } catch (err) {
       console.error('Error loading more thoughts:', err);
     } finally {
