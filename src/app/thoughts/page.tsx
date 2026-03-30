@@ -31,6 +31,7 @@ export default function ThoughtsPage() {
         const { data, error } = await supabase
           .from('thoughts')
           .select('*')
+          .range(0, 4999)
           .order('created_at', { ascending: false });
 
         if (error) throw error;

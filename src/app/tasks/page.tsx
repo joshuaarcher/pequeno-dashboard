@@ -30,6 +30,7 @@ export default function TasksPage() {
         const { data: tasksData, error: tasksError } = await supabase
           .from('tasks')
           .select('*')
+          .range(0, 999)
           .order('created_at', { ascending: false });
 
         if (tasksError) throw tasksError;
@@ -38,6 +39,7 @@ export default function TasksPage() {
         const { data: workLogsData, error: workLogsError } = await supabase
           .from('work_log')
           .select('*')
+          .range(0, 999)
           .order('created_at', { ascending: false });
 
         if (workLogsError) throw workLogsError;

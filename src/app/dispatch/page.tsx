@@ -38,6 +38,7 @@ export default function DispatchPage() {
         const { data: dispatchData, error: dispatchError } = await supabase
           .from('dispatch')
           .select('*')
+          .range(0, 999)
           .order('created_at', { ascending: false });
 
         if (dispatchError) throw dispatchError;
@@ -46,6 +47,7 @@ export default function DispatchPage() {
         const { data: relayData, error: relayError } = await supabase
           .from('relay_messages')
           .select('*')
+          .range(0, 999)
           .order('created_at', { ascending: false });
 
         if (relayError) throw relayError;
@@ -457,22 +459,14 @@ export default function DispatchPage() {
                               )}
                               {!isDispatch && (
                                 <>
-                                  {('content' in msg && msg.content) && (
+                                  {('body' in msg && msg.body) && (
                                     <div>
                                       <h4 className="text-xs font-semibold text-gray-400 mb-1">
-                                        Content
+                                        Body
                                       </h4>
                                       <p className="text-sm text-gray-200 whitespace-pre-wrap">
-                                        {msg.content as React.ReactNode}
+                                        {msg.body as React.ReactNode}
                                       </p>
-                                    </div>
-                                  )}
-                                  {('relay_type' in msg && msg.relay_type) && (
-                                    <div>
-                                      <h4 className="text-xs font-semibold text-gray-400 mb-1">
-                                        Relay Type
-                                      </h4>
-                                      <p className="text-sm text-gray-300">{String(msg.relay_type)}</p>
                                     </div>
                                   )}
                                 </>

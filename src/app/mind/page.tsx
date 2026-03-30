@@ -45,6 +45,7 @@ export default function MindPage() {
       const { data, error } = await supabase
         .from('joshua_mind')
         .select('*')
+        .range(0, 1999)
         .order('created_at', { ascending: false });
 
       if (error) throw error;

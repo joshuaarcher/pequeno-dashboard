@@ -341,7 +341,10 @@ export default function DriftGaugePage() {
         {/* Header */}
         <div className="mb-12">
           <h1 className="text-4xl font-bold mb-2 text-amber-500">Drift Gauge</h1>
-          <p className="text-neutral-400 mb-4">How far apart are the minds?</p>
+          <p className="text-neutral-400 mb-2">How far apart are the minds?</p>
+          <p className="text-xs text-yellow-500/80 mb-2">
+            Note: Local SQLite and D1 columns are frozen snapshots from 2026-03-29. D1 is retired. Supabase is the canonical source.
+          </p>
           <p className="text-xs text-neutral-500">
             Updated {formatDate(refreshTime)}
           </p>

@@ -36,6 +36,7 @@ export default function KnowledgePage() {
       const { data, error } = await supabase
         .from('knowledge')
         .select('*')
+        .range(0, 1999)
         .order('modified', { ascending: false });
 
       if (error) throw error;
